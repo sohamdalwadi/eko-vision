@@ -5,7 +5,41 @@ We are building a scalable, community-driven on-device vision playground for And
 
 ---
 
-## 🎯 How Can You Contribute?
+## 🌿 Branching Strategy & Contribution Flow
+
+We use a two-branch workflow to maintain stability while enabling rapid community iteration:
+
+```
+feature/your-feature
+        │
+        ▼ (Pull Request)
+      [ dev ]  ──────► Automated CI builds "Beta APK"
+        │
+        ▼ (Merge when tested & stable)
+     [ main ]  ──────► Automated CI builds "Stable APK"
+```
+
+1. **`main` (Stable):** Production-ready code. Direct pushes are restricted.
+2. **`dev` (Active Development):** Integration branch for ongoing work. **All pull requests must target `dev`.**
+3. **`feature/<name>` or `fix/<name>`:** Create your branch from `dev`.
+
+---
+
+## 🤖 Automated CI Verification
+
+When you submit a Pull Request targeting `dev` or `main`:
+* **GitHub Actions** automatically checks out your PR, sets up JDK 17, and runs `./gradlew assembleDebug`.
+* If your changes cause a compilation error or break dependencies, the PR check will fail.
+* Reviewers can verify the temporary PR APK artifact directly before merging.
+* Merging to `dev` automatically generates a new **Beta APK** under the `beta-latest` GitHub Release.
+* Merging to `main` automatically updates the **Stable APK** under `stable-latest`.
+
+> [!NOTE]
+> **Zero Cost & Minimal Storage:** Build artifacts are retained for only 24 hours, and old workflow runs are pruned automatically. This keeps the project lightweight and well within free limits.
+
+---
+
+## 🎯 Contribution Areas
 
 You can contribute in many ways:
 * **New Vision Modes:** Add specialized analyzers (e.g. Document scanner, Nutrition facts extractor, Accessibility voice reader).
@@ -16,13 +50,19 @@ You can contribute in many ways:
 
 ---
 
-## 🛠️ Development Workflow
+## 🛠️ Step-by-Step Development Guide
 
-### 1. Fork & Clone
+### 1. Fork & Branch
 ```bash
+# Clone your fork
 git clone https://github.com/<your-username>/eko-vision.git
 cd eko-vision
-git checkout -b feature/my-new-feature
+
+# Checkout the dev branch
+git checkout dev
+
+# Create a feature branch
+git checkout -b feature/awesome-vision-mode
 ```
 
 ### 2. Code Standards
@@ -38,9 +78,13 @@ Write clear, conventional commit messages:
 * `perf: optimize bitmap to rgb byte conversion`
 
 ### 4. Opening a Pull Request
-* Open a PR against the `main` branch.
-* Describe what your PR adds or fixes, including screenshots/recordings if there are UI changes.
-* Link any related issues.
+1. Push your branch to your fork:
+   ```bash
+   git push -u origin feature/awesome-vision-mode
+   ```
+2. Open a Pull Request targeting the **`dev`** branch of `sohamdalwadi/eko-vision`.
+3. Provide a clear description and any screenshots/recordings if UI was modified.
+4. Verify that the GitHub Actions build check passes.
 
 ---
 

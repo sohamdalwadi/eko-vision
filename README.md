@@ -5,18 +5,31 @@
 **Ultra-Lightweight On-Device Vision Intelligence for Android**  
 *Powered by Mirage (~22 MB Vision-Language Model by Cactus Compute)*
 
+[![Build & Verify APK](https://github.com/sohamdalwadi/eko-vision/actions/workflows/build-apk.yml/badge.svg)](https://github.com/sohamdalwadi/eko-vision/actions/workflows/build-apk.yml)
+[![Download Stable APK](https://img.shields.io/badge/Download-Stable%20APK-00E5FF.svg?logo=android&logoColor=black)](https://github.com/sohamdalwadi/eko-vision/releases/tag/stable-latest)
+[![Download Beta APK](https://img.shields.io/badge/Download-Beta%20APK-FFD600.svg?logo=android&logoColor=black)](https://github.com/sohamdalwadi/eko-vision/releases/tag/beta-latest)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Kotlin](https://img.shields.io/badge/Kotlin-2.1.0-purple.svg?logo=kotlin)](https://kotlinlang.org)
-[![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-2025.02-green.svg?logo=android)](https://developer.android.com/jetpack/compose)
-[![CameraX](https://img.shields.io/badge/CameraX-1.4.1-orange.svg)](https://developer.android.com/training/camerax)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-[![Model Footprint](https://img.shields.io/badge/Model%20Size-22%20MB-blueviolet.svg)](#about-mirage)
 
 <p align="center">
   <b>100% On-Device</b> • <b>Sub-100ms Latency</b> • <b>Zero Cloud Calls</b> • <b>Full Hardware Privacy</b>
 </p>
 
 </div>
+
+---
+
+## 📲 Download & Try the APK
+
+We provide rolling, automatically verified APK builds straight from GitHub Actions:
+
+| Build Channel | Branch | APK Download | Target Audience |
+| :--- | :--- | :--- | :--- |
+| **Stable Channel** | [`main`](https://github.com/sohamdalwadi/eko-vision/tree/main) | [**Download Stable APK**](https://github.com/sohamdalwadi/eko-vision/releases/tag/stable-latest) | General users, stable demos, verified features. |
+| **Beta Channel** | [`dev`](https://github.com/sohamdalwadi/eko-vision/tree/dev) | [**Download Beta APK**](https://github.com/sohamdalwadi/eko-vision/releases/tag/beta-latest) | Contributors, testers, and previewing active pull requests. |
+
+> [!NOTE]
+> **Space-Saving Rolling Builds:** To keep GitHub storage clean and within free limits, only the **latest** build of each channel is preserved. Older builds and intermediate workflow runs are automatically pruned.
 
 ---
 
@@ -55,12 +68,25 @@ flowchart TD
 
 ---
 
-## 🚀 Key Features
+## 🌿 Branching Strategy
 
-* **⚡ Real-Time Camera HUD:** Live CameraX pipeline with real-time bounding box tracking and OCR text recognition rendered directly onto Compose Canvas.
-* **🔒 100% Private & Offline:** Camera frames never leave device memory. Telemetry is opt-in and disabled by default.
-* **🔋 Battery-Conscious Throttling:** Smart frame sampling (8–10 FPS) prevents thermal throttling and minimizes battery drain.
-* **🧩 Modular & Extensible:** Built on clean MVI/MVVM architecture with pluggable `VisionMode` strategies for community contributions.
+To keep development fast, stable, and contributor-friendly, we follow a simple two-tier branching strategy:
+
+```
+[ feature/* ] ────────► (PR & Automated APK Verification)
+                             │
+                             ▼
+  [ dev ] ──────────────────────────────────────────► (Builds Beta APK)
+    │
+    ▼ (Periodic Stabilization & Testing)
+  [ main ] ─────────────────────────────────────────► (Builds Stable APK)
+```
+
+1. **`main` (Stable):** Represents production-ready code. Merges occur from `dev` only after features are stabilized.
+2. **`dev` (Development):** The active integration branch. All community contributions and feature pull requests must target `dev`.
+3. **`feature/*`:** Individual feature or bugfix branches created from `dev`.
+
+Every pull request automatically triggers an APK build in CI to verify that code compiles cleanly and introduces no regressions.
 
 ---
 
@@ -74,6 +100,7 @@ We welcome contributions of all levels! Here is our current roadmap:
   - [x] Compose Canvas bounding box overlay with confidence scores
   - [x] Performance telemetry HUD (FPS, inference latency in ms)
   - [x] Freeze/Pause frame inspector
+  - [x] GitHub Actions automated APK build & rolling release pipeline
 - [ ] **Phase 2: Smart Extraction & Forms**
   - [ ] Structured receipt, invoice, and business card schema parsing
   - [ ] One-tap export to JSON / Room DB / CSV
@@ -95,6 +122,8 @@ We welcome contributions of all levels! Here is our current roadmap:
 
 ```
 eko-vision/
+├── .github/workflows/
+│   └── build-apk.yml                        # Automated CI/CD, verification & rolling releases
 ├── app/
 │   ├── src/main/
 │   │   ├── AndroidManifest.xml
@@ -120,11 +149,12 @@ eko-vision/
 │   ├── build.gradle.kts
 │   └── proguard-rules.pro
 ├── gradle/
+│   ├── wrapper/                             # Gradle wrapper configuration
 │   └── libs.versions.toml                   # Gradle Version Catalog
 ├── build.gradle.kts
 ├── settings.gradle.kts
 ├── LICENSE                                  # Apache 2.0 License
-├── CONTRIBUTING.md                          # Contribution guidelines
+├── CONTRIBUTING.md                          # Contribution guidelines & branching model
 └── README.md
 ```
 
@@ -142,6 +172,7 @@ eko-vision/
    ```bash
    git clone https://github.com/sohamdalwadi/eko-vision.git
    cd eko-vision
+   git checkout dev
    ```
 2. **Obtain Mirage Model Weights (`mirage.cact`):**
    * Download the official 22MB Mirage weights from [Cactus Compute Hugging Face](https://huggingface.co/Cactus-Compute/mirage).
@@ -155,14 +186,7 @@ eko-vision/
 
 ## 🤝 Contributing
 
-We love contributions! Whether you want to fix a bug, improve UI performance, add new vision modes, or write documentation:
-
-1. Read our [Contribution Guide](CONTRIBUTING.md).
-2. Fork the repo and create your feature branch:
-   ```bash
-   git checkout -b feature/awesome-vision-mode
-   ```
-3. Commit your changes and open a Pull Request.
+We love contributions! Please read our [Contribution Guidelines](CONTRIBUTING.md) for details on our branching workflow and how PR verification works.
 
 ---
 

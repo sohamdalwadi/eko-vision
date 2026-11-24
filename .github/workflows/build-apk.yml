@@ -1,0 +1,147 @@
+name: Build & Verify Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+# Cancel redundant in-progress runs for the same branch/PR to save runner resources
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    name: Build & Verify APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Bootstrap Gradle Wrapper
+        run: |
+          if [ ! -f "gradlew" ]; then
+            echo "Generating Gradle wrapper..."
+            gradle wrapper --gradle-version 8.11.1
+          fi
+          chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Locate and Rename APK
+        id: prepare_apk
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "Error: APK not found in outputs!"
+            exit 1
+          fi
+          
+          BRANCH_NAME="${{ github.ref_name }}"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            OUTPUT_NAME="eko-vision-pr${{ github.event.pull_request.number }}-${SHORT_SHA}.apk"
+          elif [ "$BRANCH_NAME" == "main" ]; then
+            OUTPUT_NAME="eko-vision-stable-latest.apk"
+          else
+            OUTPUT_NAME="eko-vision-beta-latest.apk"
+          fi
+          
+          cp "$APK_PATH" "$OUTPUT_NAME"
+          echo "apk_path=$OUTPUT_NAME" >> $GITHUB_OUTPUT
+          echo "apk_name=$OUTPUT_NAME" >> $GITHUB_OUTPUT
+          echo "Generated APK: $OUTPUT_NAME"
+
+      # Short retention (1 day) keeps storage strictly within free GitHub limits
+      - name: Upload Temporary Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.prepare_apk.outputs.apk_name }}
+          path: ${{ steps.prepare_apk.outputs.apk_path }}
+          retention-days: 1
+          if-no-files-found: error
+
+  publish-rolling-release:
+    name: Update Rolling Release
+    needs: build
+    if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'dev')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Built APK
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.ref_name == 'main' && 'eko-vision-stable-latest.apk' || 'eko-vision-beta-latest.apk' }}
+
+      - name: Publish Rolling Release (Stable - main)
+        if: github.ref_name == 'main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: stable-latest
+          name: "Eko Vision (Stable Latest)"
+          body: |
+            ## 🚀 Eko Vision - Stable Build
+            * **Branch:** `main`
+            * **Commit:** `${{ github.sha }}`
+            * **Verification:** Built & verified automatically from the latest merged stable code.
+            
+            > [!NOTE]
+            > This rolling release is automatically updated on every push to `main`. Old APK builds are replaced to conserve storage.
+          files: eko-vision-stable-latest.apk
+          prerelease: false
+          make_latest: true
+
+      - name: Publish Rolling Pre-Release (Beta - dev)
+        if: github.ref_name == 'dev'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: beta-latest
+          name: "Eko Vision (Beta / Dev Latest)"
+          body: |
+            ## 🧪 Eko Vision - Beta Preview
+            * **Branch:** `dev`
+            * **Commit:** `${{ github.sha }}`
+            * **Status:** Bleeding-edge development build.
+            
+            > [!TIP]
+            > Test upcoming features and bug fixes before they are stabilized into `main`. This build is updated on every push to `dev`.
+          files: eko-vision-beta-latest.apk
+          prerelease: true
+          make_latest: false
+
+      - name: Clean Old Workflow Runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          retain_days: 1
+          keep_minimum_runs: 2
