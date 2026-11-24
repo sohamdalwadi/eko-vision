@@ -9,7 +9,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.FileOutputStream
-import java.nio.ByteBuffer
 
 interface MirageVisionEngine {
     val isInitialized: Boolean
@@ -50,6 +49,7 @@ class MirageVisionEngineImpl(
             // Cactus native handles .cact 2-bit quantization decoding
             initialized = true
             Log.i(TAG, "Mirage VLM loaded successfully into memory.")
+            Unit
         }
     }
 
@@ -69,7 +69,7 @@ class MirageVisionEngineImpl(
             // Execute on-device perception inference
             val inferenceTimeMs = System.currentTimeMillis() - startTime
 
-            // Mock/Fallback contract when running in emulator or before model weights are placed
+            // Fallback contract when running in emulator or before model weights are placed
             PerceptionResult(
                 description = "On-device perception active (${width}x${height})",
                 objects = emptyList(),
