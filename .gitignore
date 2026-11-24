@@ -1,0 +1,52 @@
+# ==========================================
+# Antigravity & AI Assistant Artifacts (Git Ignored)
+# ==========================================
+.gemini/
+.antigravity/
+.system_generated/
+.scratch/
+brain/
+transcripts/
+*.scratch
+*.log
+
+# ==========================================
+# Android & Gradle
+# ==========================================
+*.apk
+*.aar
+*.ap_
+*.aab
+*.dex
+*.class
+
+# Gradle files
+.gradle/
+build/
+app/build/
+buildOutput/
+
+# Local configuration (SDK path, NDK path, API keys)
+local.properties
+
+# Android Studio & IntelliJ IDEA
+.idea/
+*.iml
+.navigation/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Keystore files
+*.jks
+*.keystore
+
+# Google Services (if added later)
+google-services.json
+
+# Model weights cache (keep large weights downloadable or in assets via LFS if committed)
+*.cact.tmp
+
+# OS-specific
+.DS_Store
+Thumbs.db
