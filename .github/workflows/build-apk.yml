@@ -11,7 +11,6 @@ on:
       - dev
   workflow_dispatch:
 
-# Cancel redundant in-progress runs for the same branch/PR to save runner resources
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -37,23 +36,17 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: 'gradle'
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Bootstrap Gradle Wrapper
-        run: |
-          if [ ! -f "gradlew" ]; then
-            echo "Generating Gradle wrapper..."
-            gradle wrapper --gradle-version 8.11.1
-          fi
-          chmod +x gradlew
+      - name: Make Gradlew Executable
+        run: chmod +x gradlew
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Locate and Rename APK
+      - name: Locate and Stage APK
         id: prepare_apk
         run: |
           APK_PATH=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
@@ -62,6 +55,7 @@ jobs:
             exit 1
           fi
           
+          mkdir -p staging
           BRANCH_NAME="${{ github.ref_name }}"
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           
@@ -73,17 +67,17 @@ jobs:
             OUTPUT_NAME="eko-vision-beta-latest.apk"
           fi
           
-          cp "$APK_PATH" "$OUTPUT_NAME"
-          echo "apk_path=$OUTPUT_NAME" >> $GITHUB_OUTPUT
-          echo "apk_name=$OUTPUT_NAME" >> $GITHUB_OUTPUT
-          echo "Generated APK: $OUTPUT_NAME"
+          cp "$APK_PATH" "staging/$OUTPUT_NAME"
+          echo "artifact_name=$OUTPUT_NAME" >> $GITHUB_OUTPUT
+          echo "staged_file=staging/$OUTPUT_NAME" >> $GITHUB_OUTPUT
+          echo "Staged APK: staging/$OUTPUT_NAME"
 
-      # Short retention (1 day) keeps storage strictly within free GitHub limits
+      # Short retention (1 day) saves storage space and stays 100% within free limits
       - name: Upload Temporary Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.prepare_apk.outputs.apk_name }}
-          path: ${{ steps.prepare_apk.outputs.apk_path }}
+          name: ${{ steps.prepare_apk.outputs.artifact_name }}
+          path: ${{ steps.prepare_apk.outputs.staged_file }}
           retention-days: 1
           if-no-files-found: error
 
@@ -101,6 +95,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ github.ref_name == 'main' && 'eko-vision-stable-latest.apk' || 'eko-vision-beta-latest.apk' }}
+          path: ./release-assets
 
       - name: Publish Rolling Release (Stable - main)
         if: github.ref_name == 'main'
@@ -116,7 +111,7 @@ jobs:
             
             > [!NOTE]
             > This rolling release is automatically updated on every push to `main`. Old APK builds are replaced to conserve storage.
-          files: eko-vision-stable-latest.apk
+          files: ./release-assets/*.apk
           prerelease: false
           make_latest: true
 
@@ -134,12 +129,13 @@ jobs:
             
             > [!TIP]
             > Test upcoming features and bug fixes before they are stabilized into `main`. This build is updated on every push to `dev`.
-          files: eko-vision-beta-latest.apk
+          files: ./release-assets/*.apk
           prerelease: true
           make_latest: false
 
       - name: Clean Old Workflow Runs
         uses: Mattraks/delete-workflow-runs@v2
+        continue-on-error: true
         with:
           token: ${{ github.token }}
           repository: ${{ github.repository }}
