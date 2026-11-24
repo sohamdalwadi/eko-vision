@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Mirage Headless Engine</title>
+</head>
+<body style="background:#000; margin:0; padding:0;">
+  <script src="cactus.js"></script>
+  <script>
+    "use strict";
+
+    const OUTPUT_CAPACITY = 16 * 1024 * 1024;
+    const TARGET_SIZE = 256;
+    const MAX_INPUT_SIZE = TARGET_SIZE * TARGET_SIZE * 3;
+
+    const SETTINGS = JSON.stringify({
+      sections: ["scene", "objects", "text", "relations", "reasoning"],
+      fields: ["bbox", "score", "description", "mask"],
+      mask_format: "polygons"
+    });
+
+    let engine = null;
+    let inputPtr = 0;
+    let outputPtr = 0;
+    let isReady = false;
+    let isInferring = false;
+
+    async function initMirage() {
+      try {
+        if (window.NativeBridge && window.NativeBridge.onStatusUpdate) {
+          window.NativeBridge.onStatusUpdate("Loading Cactus WebAssembly...");
+        }
+
+        const wasmResp = await fetch("cactus.wasm");
+        const wasmBinary = await wasmResp.arrayBuffer();
+        engine = await createCactus({ wasmBinary });
+
+        if (window.NativeBridge && window.NativeBridge.onStatusUpdate) {
+          window.NativeBridge.onStatusUpdate("Loading Mirage 22MB weights...");
+        }
+
+        const modelResp = await fetch("mirage.cact");
+        const modelBinary = await modelResp.arrayBuffer();
+        const modelBytes = new Uint8Array(modelBinary);
+
+        const modelPtr = engine._malloc(modelBytes.length);
+        if (!modelPtr) throw new Error("Could not allocate memory for Mirage model");
+
+        engine.HEAPU8.set(modelBytes, modelPtr);
+        const loadCode = engine._cactus_load(modelPtr, BigInt(modelBytes.length));
+        if (loadCode < 0) {
+          engine._free(modelPtr);
+          throw new Error("Failed to load Mirage weights (code: " + loadCode + ")");
+        }
+
+        // Pre-allocate fixed input and output buffers once
+        inputPtr = engine._malloc(MAX_INPUT_SIZE);
+        outputPtr = engine._malloc(OUTPUT_CAPACITY);
+        if (!inputPtr || !outputPtr) throw new Error("Could not allocate inference buffers");
+
+        isReady = true;
+        if (window.NativeBridge && window.NativeBridge.onEngineReady) {
+          window.NativeBridge.onEngineReady();
+        }
+      } catch (err) {
+        isReady = false;
+        if (window.NativeBridge && window.NativeBridge.onInferenceError) {
+          window.NativeBridge.onInferenceError("Init failed: " + (err.message || String(err)));
+        }
+      }
+    }
+
+    window.runMirageInference = function(base64Rgb, width, height) {
+      console.log("runMirageInference called: " + width + "x" + height + ", b64len=" + (base64Rgb ? base64Rgb.length : 0));
+      if (!isReady || !engine) {
+        console.warn("runMirageInference: engine not ready yet");
+        if (window.NativeBridge && window.NativeBridge.onInferenceError) {
+          window.NativeBridge.onInferenceError("Engine not ready");
+        }
+        return;
+      }
+      if (isInferring) {
+        console.log("runMirageInference: dropped frame, already inferring");
+        return; // Drop frame safely to avoid queue congestion
+      }
+
+      isInferring = true;
+      if (window.NativeBridge && window.NativeBridge.onFrameStarted) {
+        window.NativeBridge.onFrameStarted();
+      }
+
+      const startTime = performance.now();
+
+      try {
+        console.log("Decoding base64 RGB buffer...");
+        const binaryStr = atob(base64Rgb);
+        const len = binaryStr.length;
+        if (len !== width * height * 3) {
+          throw new Error("Invalid buffer dimensions: expected " + (width * height * 3) + ", got " + len);
+        }
+
+        const heap = engine.HEAPU8;
+        for (let i = 0; i < len; i++) {
+          heap[inputPtr + i] = binaryStr.charCodeAt(i);
+        }
+
+        console.log("Starting cactus_describe forward pass on WebAssembly...");
+        const code = engine.ccall(
+          "cactus_describe",
+          "number",
+          ["number", "number", "number", "string", "number", "number", "number", "number"],
+          [inputPtr, width, height, SETTINGS, 0, 0, outputPtr, OUTPUT_CAPACITY]
+        );
+
+        const elapsedMs = performance.now() - startTime;
+        console.log("cactus_describe finished in " + elapsedMs.toFixed(1) + "ms with code: " + code);
+
+        if (code < 0) {
+          const errPtr = engine.ccall("cactus_last_error", "number", [], []);
+          const errorMsg = engine.UTF8ToString(errPtr) || ("Inference failed with code " + code);
+          throw new Error(errorMsg);
+        }
+
+        const jsonStr = engine.UTF8ToString(outputPtr);
+        console.log("Mirage JSON output size: " + jsonStr.length + " chars");
+        if (window.NativeBridge && window.NativeBridge.onInferenceComplete) {
+          window.NativeBridge.onInferenceComplete(jsonStr, elapsedMs);
+        }
+      } catch (err) {
+        console.error("runMirageInference exception:", err);
+        if (window.NativeBridge && window.NativeBridge.onInferenceError) {
+          window.NativeBridge.onInferenceError(err.message || String(err));
+        }
+      } finally {
+        isInferring = false;
+      }
+    };
+
+    window.addEventListener("DOMContentLoaded", () => {
+      initMirage();
+    });
+  </script>
+</body>
+</html>

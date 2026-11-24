@@ -13,93 +13,115 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-data class CameraUiState(
-    val isModelLoaded: Boolean = false,
-    val isFrozen: Boolean = false,
-    val perception: PerceptionResult = PerceptionResult(),
-    val fps: Float = 0.0f,
-    val averageLatencyMs: Long = 0L,
-    val showBoundingBoxes: Boolean = true,
-    val showOcr: Boolean = true,
-    val activeMode: VisionMode = VisionMode.LIVE_PERCEPTION,
-    val errorMessage: String? = null
-)
-
-enum class VisionMode {
-    LIVE_PERCEPTION,
-    DOCUMENT_SCAN,
-    ASSISTIVE_VOICE
+enum class CaptureState {
+    FRAMING,    // Live 60 FPS CameraX viewfinder preview, 0% inference CPU
+    ANALYZING,  // Still frame captured, frozen on screen, Mirage 22MB WASM forward pass in progress
+    RESULT      // Inference complete, still frame + bounding boxes, masks, relations & OCR displayed
 }
+
+data class CameraUiState(
+    val captureState: CaptureState = CaptureState.FRAMING,
+    val isModelLoaded: Boolean = false,
+    val capturedBitmap: Bitmap? = null,
+    val perception: PerceptionResult = PerceptionResult(
+        description = "Mirage 22MB engine ready. Aim camera at any scene and tap Scan."
+    ),
+    val lastLatencyMs: Long = 0L,
+    val showBoundingBoxes: Boolean = true,
+    val showMasks: Boolean = true,
+    val showRelations: Boolean = true,
+    val showOcr: Boolean = true,
+    val engineStatus: String = "Initializing Mirage runtime..."
+)
 
 class CameraViewModel(
     application: Application
 ) : AndroidViewModel(application) {
 
-    private val engine: MirageVisionEngine = MirageVisionEngineImpl(application)
-    
     private val _uiState = MutableStateFlow(CameraUiState())
     val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
 
-    private var frameCount = 0
-    private var lastFpsCalculationTime = System.currentTimeMillis()
+    private val engine: MirageVisionEngine = MirageVisionEngineImpl(application) { newPerception ->
+        updatePerceptionResult(newPerception)
+    }
+
+    val headlessWebView: android.webkit.WebView?
+        get() = engine.webView
 
     init {
-        loadModel()
+        viewModelScope.launch {
+            engine.isReady.collect { ready ->
+                _uiState.update { it.copy(isModelLoaded = ready) }
+            }
+        }
+        viewModelScope.launch {
+            engine.statusMessage.collect { status ->
+                _uiState.update { it.copy(engineStatus = status) }
+            }
+        }
     }
 
-    private fun loadModel() {
+    /**
+     * User tapped the shutter button or viewfinder to capture and analyze the current frame.
+     */
+    fun startScan(bitmap: Bitmap) {
+        if (!_uiState.value.isModelLoaded) return
+        if (_uiState.value.captureState == CaptureState.ANALYZING) return
+
+        _uiState.update {
+            it.copy(
+                captureState = CaptureState.ANALYZING,
+                capturedBitmap = bitmap
+            )
+        }
+
         viewModelScope.launch {
-            val result = engine.initialize()
-            if (result.isSuccess) {
-                _uiState.update { it.copy(isModelLoaded = true) }
-            } else {
-                _uiState.update { 
-                    it.copy(errorMessage = "Failed to load Mirage weights: ${result.exceptionOrNull()?.message}") 
+            val accepted = engine.analyzeFrame(bitmap)
+            if (!accepted) {
+                // If engine was unable to accept, return to framing
+                _uiState.update {
+                    it.copy(captureState = CaptureState.FRAMING, capturedBitmap = null)
                 }
             }
         }
     }
 
-    fun onFrameReceived(bitmap: Bitmap) {
-        if (_uiState.value.isFrozen || !_uiState.value.isModelLoaded) return
-
-        viewModelScope.launch {
-            val result = engine.analyzeFrame(bitmap)
-            result.onSuccess { perception ->
-                updateFpsAndLatency(perception.latencyMs)
-                _uiState.update { 
-                    it.copy(perception = perception, averageLatencyMs = perception.latencyMs) 
-                }
-            }
+    /**
+     * User tapped "New Scan" / "Retake" to discard the current result and return to live framing.
+     */
+    fun resetToFraming() {
+        _uiState.update {
+            it.copy(
+                captureState = CaptureState.FRAMING,
+                capturedBitmap = null
+            )
         }
     }
 
-    private fun updateFpsAndLatency(latencyMs: Long) {
-        frameCount++
-        val now = System.currentTimeMillis()
-        val elapsed = now - lastFpsCalculationTime
-        if (elapsed >= 1000) {
-            val currentFps = (frameCount * 1000f) / elapsed
-            _uiState.update { it.copy(fps = currentFps) }
-            frameCount = 0
-            lastFpsCalculationTime = now
+    private fun updatePerceptionResult(perception: PerceptionResult) {
+        _uiState.update {
+            it.copy(
+                captureState = CaptureState.RESULT,
+                perception = perception,
+                lastLatencyMs = perception.latencyMs
+            )
         }
-    }
-
-    fun toggleFreeze() {
-        _uiState.update { it.copy(isFrozen = !it.isFrozen) }
     }
 
     fun toggleBoundingBoxes() {
         _uiState.update { it.copy(showBoundingBoxes = !it.showBoundingBoxes) }
     }
 
-    fun toggleOcr() {
-        _uiState.update { it.copy(showOcr = !it.showOcr) }
+    fun toggleMasks() {
+        _uiState.update { it.copy(showMasks = !it.showMasks) }
     }
 
-    fun setVisionMode(mode: VisionMode) {
-        _uiState.update { it.copy(activeMode = mode) }
+    fun toggleRelations() {
+        _uiState.update { it.copy(showRelations = !it.showRelations) }
+    }
+
+    fun toggleOcr() {
+        _uiState.update { it.copy(showOcr = !it.showOcr) }
     }
 
     override fun onCleared() {

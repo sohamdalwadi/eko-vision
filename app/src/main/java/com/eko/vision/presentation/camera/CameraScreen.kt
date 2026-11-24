@@ -1,10 +1,15 @@
 package com.eko.vision.presentation.camera
 
+import android.util.Log
+import android.view.ViewGroup
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -12,19 +17,20 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.eko.vision.core.camera.CameraFrameAnalyzer
 import com.eko.vision.presentation.camera.components.BoundingBoxOverlay
+import com.eko.vision.presentation.camera.components.MirageShowcaseSheet
 import com.eko.vision.presentation.camera.components.PerceptionHud
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
-import java.util.concurrent.Executors
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -45,7 +51,9 @@ fun CameraScreen(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.padding(24.dp)
+                modifier = Modifier
+                    .padding(24.dp)
+                    .safeDrawingPadding()
             ) {
                 Text(
                     text = "Camera Permission Required",
@@ -72,72 +80,134 @@ private fun CameraContent(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val uiState by viewModel.uiState.collectAsState()
+    var isShowcaseVisible by remember { mutableStateOf(false) }
 
-    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
-    val previewView = remember { PreviewView(context) }
-
-    DisposableEffect(Unit) {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-        cameraProviderFuture.addListener({
-            val cameraProvider = cameraProviderFuture.get()
-
-            val preview = Preview.Builder().build().also {
-                it.setSurfaceProvider(previewView.surfaceProvider)
-            }
-
-            val imageAnalyzer = ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build()
-                .also {
-                    it.setAnalyzer(cameraExecutor, CameraFrameAnalyzer { bitmap ->
-                        viewModel.onFrameReceived(bitmap)
-                    })
-                }
-
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-            try {
-                cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(
-                    lifecycleOwner,
-                    cameraSelector,
-                    preview,
-                    imageAnalyzer
-                )
-            } catch (exc: Exception) {
-                exc.printStackTrace()
-            }
-        }, ContextCompat.getMainExecutor(context))
-
-        onDispose {
-            cameraExecutor.shutdown()
-        }
-    }
+    var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // 1. CameraX Preview Layer
+        // 1. Fullscreen Native CameraX Hardware Viewfinder
+        // Running in COMPATIBLE mode (TextureView) for seamless compositing & bitmap capture
         AndroidView(
-            factory = { previewView },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                val previewView = PreviewView(ctx).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    scaleType = PreviewView.ScaleType.FILL_CENTER
+                    implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                }
+                previewViewRef = previewView
+
+                val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                cameraProviderFuture.addListener({
+                    val cameraProvider = cameraProviderFuture.get()
+
+                    val preview = Preview.Builder().build().also {
+                        it.setSurfaceProvider(previewView.surfaceProvider)
+                    }
+
+                    val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+                    try {
+                        cameraProvider.unbindAll()
+                        cameraProvider.bindToLifecycle(
+                            lifecycleOwner,
+                            cameraSelector,
+                            preview
+                        )
+                    } catch (exc: Exception) {
+                        Log.e("CameraScreen", "Camera use cases binding failed", exc)
+                    }
+                }, ContextCompat.getMainExecutor(ctx))
+
+                previewView
+            }
         )
 
-        // 2. Dynamic Bounding Box & Label Overlay
-        BoundingBoxOverlay(
-            objects = uiState.perception.objects,
-            ocrBlocks = uiState.perception.ocr,
-            showObjects = uiState.showBoundingBoxes,
-            showOcr = uiState.showOcr,
-            modifier = Modifier.fillMaxSize()
-        )
+        // 2. Invisible 1.dp WebAssembly Engine Host (Keeps Chromium renderer thread active in Window)
+        viewModel.headlessWebView?.let { engineView ->
+            AndroidView(
+                factory = {
+                    (engineView.parent as? ViewGroup)?.removeView(engineView)
+                    engineView
+                },
+                modifier = Modifier.size(1.dp)
+            )
+        }
 
-        // 3. Telemetry HUD and Control Panels
+        // 3. Captured Still Image Display (Shown when analyzing or showing results)
+        AnimatedVisibility(
+            visible = uiState.capturedBitmap != null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            uiState.capturedBitmap?.let { bitmap ->
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "Captured Still Image",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+
+        // 4. Native Dynamic Bounding Boxes, Polygon Masks, Spatial Arrows & OCR
+        if (uiState.captureState == CaptureState.RESULT) {
+            BoundingBoxOverlay(
+                objects = uiState.perception.objects,
+                ocrBlocks = uiState.perception.ocr,
+                spatialRelations = uiState.perception.spatialRelations,
+                showObjects = uiState.showBoundingBoxes,
+                showMasks = uiState.showMasks,
+                showRelations = uiState.showRelations,
+                showOcr = uiState.showOcr,
+                isScanning = false,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else if (uiState.captureState == CaptureState.FRAMING) {
+            // In framing, display framing reticle
+            BoundingBoxOverlay(
+                objects = emptyList(),
+                ocrBlocks = emptyList(),
+                spatialRelations = emptyList(),
+                showObjects = false,
+                showMasks = false,
+                showRelations = false,
+                showOcr = false,
+                isScanning = true,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        // 5. Native AI HUD (Telemetry bar, Scene description, Layer Toggles, Shutter)
         PerceptionHud(
             uiState = uiState,
-            onToggleFreeze = viewModel::toggleFreeze,
             onToggleBoxes = viewModel::toggleBoundingBoxes,
+            onToggleMasks = viewModel::toggleMasks,
+            onToggleRelations = viewModel::toggleRelations,
             onToggleOcr = viewModel::toggleOcr,
-            onModeSelect = viewModel::setVisionMode,
-            modifier = Modifier.fillMaxSize()
+            onTriggerScan = {
+                val currentBitmap = previewViewRef?.bitmap
+                if (currentBitmap != null) {
+                    viewModel.startScan(currentBitmap)
+                }
+            },
+            onResetToFraming = viewModel::resetToFraming,
+            onOpenShowcase = { isShowcaseVisible = true },
+            modifier = Modifier
+                .fillMaxSize()
+                .safeDrawingPadding()
         )
+
+        // 6. Native Material 3 Bottom Sheet Inspector (Entities, Spatial Graph, OCR, Reasoning, JSON)
+        if (isShowcaseVisible) {
+            MirageShowcaseSheet(
+                perception = uiState.perception,
+                onDismissRequest = { isShowcaseVisible = false }
+            )
+        }
     }
 }

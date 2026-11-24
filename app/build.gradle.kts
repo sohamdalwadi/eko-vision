@@ -91,4 +91,7 @@ dependencies {
 
     // Permission handling
     implementation(libs.accompanist.permissions)
+
+    // AndroidX WebKit for offline on-device WASM asset serving
+    implementation(libs.androidx.webkit)
 }
